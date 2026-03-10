@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import HomeScreen from "./src/screens/HomeScreen";
 import InspectionScreen from "./src/screens/InspectionScreen";
+import WifiScreen from "./src/screens/WifiScreen";
 
 import { RootStackParamList } from "./src/types/navigation";
 
@@ -24,6 +25,12 @@ export default function App() {
           name="Home"
           component={HomeScreen}
           options={{ title: "OKB Inspector" }}
+        />
+
+        <Stack.Screen
+          name="Wifi"
+          component={WifiScreen}
+          options={{ title: "Wi-Fi анализ" }}
         />
 
         <Stack.Screen

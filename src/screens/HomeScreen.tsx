@@ -5,6 +5,7 @@ import { tickets } from "../data/tickets";
 import { colors } from "../theme";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../types/navigation";
+import { Platform, Button } from "react-native";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Home">;
 
@@ -26,6 +27,13 @@ export default function HomeScreen({ navigation }: Props) {
         value={query}
         onChangeText={setQuery}
       />
+
+      {Platform.OS === "android" && (
+        <Button
+          title="Анализ Wi-Fi"
+          onPress={() => navigation.navigate("Wifi")}
+        />
+      )}
 
       <FlatList
         data={filtered}
