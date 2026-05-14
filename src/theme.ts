@@ -6,4 +6,5 @@ export const colors = {
   subtext: "#9ca3af",
   accent: "#4f8cff",
   danger: "#ff5d5d",
+  primary: "#007AFF",
 };
