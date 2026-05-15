@@ -222,7 +222,11 @@ export default function ChecklistScreen({ route, navigation }: Props) {
 
       formData.append("answers", JSON.stringify(answers));
 
-      console.log(formData);
+      console.log("=== FORM DATA ===");
+
+      formData.forEach((value, key) => {
+        console.log(key, value);
+      });
 
       const response = await fetch("http://158.160.228.123:8777/checks", {
         method: "POST",
@@ -425,8 +429,8 @@ export default function ChecklistScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
     padding: 16,
+    marginTop: 100,
   },
 
   header: {
