@@ -7,6 +7,12 @@ export interface Vsp {
   vsp_timetable: string;
 }
 
+export interface Violation {
+  id: string;
+  comment: string;
+  photos: string[];
+}
+
 export interface CheckItem {
   check_item_id: string;
   check_item_description: string;
