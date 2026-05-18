@@ -1,21 +1,25 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
   PermissionsAndroid,
-  ActivityIndicator,
-  RefreshControl,
+  TouchableOpacity,
+  AppState,
+  AppStateStatus,
+  Platform,
 } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
-import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-
+import { useFocusEffect } from "@react-navigation/native";
 import WifiManager from "react-native-wifi-reborn";
-
-import { colors } from "../theme";
 import { scanAndClassifyWifi } from "../services/WifiClassifier";
 
 type ClassifiedWifiNetwork = {
@@ -31,468 +35,499 @@ type ClassifiedWifiNetwork = {
   order: number;
 };
 
-const getSignalColor = (level: number) => {
-  if (level >= -55) return "#4ade80";
-  if (level >= -70) return "#facc15";
+type FilterType = "all" | "good-wifi" | "nontarget-wifi" | "bad-wifi";
 
-  return "#f87171";
+const FILTER_CATEGORIES: {
+  key: FilterType;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { key: "bad-wifi", label: "Опасные", icon: "warning" },
+  { key: "nontarget-wifi", label: "Подозрительные", icon: "eye" },
+  { key: "good-wifi", label: "Доверенные", icon: "shield-checkmark" },
+  { key: "all", label: "Все", icon: "apps" },
+];
+
+const CATEGORY_PRIORITY: Record<FilterType, number> = {
+  "bad-wifi": 0,
+  "nontarget-wifi": 1,
+  "good-wifi": 2,
+  all: 3,
 };
 
-const getStatusColor = (type: string) => {
-  switch (type) {
-    case "good-wifi":
-      return "#4ade80";
-    case "nontarget-wifi":
-      return "#facc15";
+const riskPriority = (color: string, order: number): number => {
+  if (order >= 50) return 0;
+  if (order >= 7) return 1;
+  if (order >= 5) return 2;
+  if (color === "good-wifi") return 3;
+  return 4;
+};
+
+const getRiskColor = (color: string): string => {
+  switch (color) {
     case "bad-wifi":
-      return "#f87171";
+      return "#FB7185";
+    case "nontarget-wifi":
+      return "#FBBF24";
+    case "good-wifi":
+      return "#34D399";
     default:
-      return "#60a5fa";
+      return "#94A3B8";
   }
 };
 
+const estimateDistance = (level: number, frequency: number): string => {
+  const exp =
+    (27.55 - 20 * Math.log10(frequency || 2412) + Math.abs(level)) / 20;
+  const distance = Math.pow(10, exp);
+  if (distance < 1) return "<1м";
+  if (distance < 10) return `${distance.toFixed(1)}м`;
+  return `${Math.round(distance)}м`;
+};
+
+const requestPermission = async (): Promise<boolean> => {
+  if (Platform.OS === "ios") return true;
+  try {
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    );
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+};
+
+const SCAN_INTERVAL = 5000;
+const SCAN_COOLDOWN = 2500;
+
 export default function WifiScreen() {
   const [networks, setNetworks] = useState<ClassifiedWifiNetwork[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<FilterType>("all");
+  const [isScanning, setIsScanning] = useState(false);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastScanRef = useRef<number>(0);
+  const mountedRef = useRef<boolean>(true);
 
-  const scanWifi = async (silent = false) => {
+  const scanWifi = useCallback(async (): Promise<void> => {
+    const now = Date.now();
+    if (now - lastScanRef.current < SCAN_COOLDOWN) return;
+
+    lastScanRef.current = now;
+    if (!mountedRef.current) return;
+    setIsScanning(true);
+
     try {
-      if (silent) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
+      const hasPermission = await requestPermission();
+      if (!hasPermission) return;
+
+      if (Platform.OS === "android") {
+        await WifiManager.forceWifiUsage(true);
       }
 
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      );
+      const result = await WifiManager.reScanAndLoadWifiList();
+      let raw: any[] = [];
 
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        console.log("Location permission denied");
-        return;
+      if (typeof result === "string") {
+        try {
+          raw = JSON.parse(result);
+        } catch {
+          raw = [];
+        }
+      } else if (Array.isArray(result)) {
+        raw = result;
+      } else if (result && typeof result === "object") {
+        raw = Object.values(result);
       }
 
-      const rawNetworks = await WifiManager.reScanAndLoadWifiList();
-
-      const classifiedNetworks = await scanAndClassifyWifi(rawNetworks);
-
-      const sorted = classifiedNetworks.sort(
-        (a, b) => a.order - b.order || b.level - a.level,
+      const valid = raw.filter(
+        (item: any) => item && typeof item === "object" && item.BSSID,
       );
 
-      setNetworks(sorted);
-    } catch (e) {
-      console.log("Wi-Fi scan error:", e);
+      if (valid.length > 0 && mountedRef.current) {
+        const classified = await scanAndClassifyWifi(valid);
+        const seen = new Set<string>();
+        const unique = classified.filter((n) => {
+          if (seen.has(n.BSSID)) return false;
+          seen.add(n.BSSID);
+          return true;
+        });
+
+        const sorted = unique.sort((a, b) => {
+          const pa = riskPriority(a.color, a.order);
+          const pb = riskPriority(b.color, b.order);
+          if (pa !== pb) return pa - pb;
+          if (a.order !== b.order) return b.order - a.order;
+          return b.level - a.level;
+        });
+
+        setNetworks(sorted);
+      }
+    } catch (error) {
+      console.error("WiFi scan error:", error);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (mountedRef.current) setIsScanning(false);
     }
-  };
+  }, []);
+
+  const startScanning = useCallback((): void => {
+    scanWifi();
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => {
+      scanWifi();
+    }, SCAN_INTERVAL);
+  }, [scanWifi]);
+
+  const stopScanning = useCallback((): void => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
-    scanWifi();
-  }, []);
+    mountedRef.current = true;
+
+    const handleAppState = (nextState: AppStateStatus): void => {
+      if (nextState === "active") {
+        startScanning();
+      } else {
+        stopScanning();
+      }
+    };
+
+    const subscription = AppState.addEventListener("change", handleAppState);
+
+    return () => {
+      mountedRef.current = false;
+      stopScanning();
+      subscription.remove();
+    };
+  }, [startScanning, stopScanning]);
 
   useFocusEffect(
     useCallback(() => {
-      scanWifi(true);
-
-      intervalRef.current = setInterval(() => {
-        scanWifi(true);
-      }, 5000);
-
-      return () => {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
-      };
-    }, []),
+      startScanning();
+      return () => stopScanning();
+    }, [startScanning, stopScanning]),
   );
 
-  const renderItem = ({ item }: { item: ClassifiedWifiNetwork }) => {
-    const signalColor = getSignalColor(item.level);
-    const statusColor = getStatusColor(item.color);
+  const counts = useMemo(() => {
+    const countMap: Record<FilterType, number> = {
+      all: networks.length,
+      "bad-wifi": 0,
+      "nontarget-wifi": 0,
+      "good-wifi": 0,
+    };
+    for (const n of networks) {
+      if (countMap[n.color as FilterType] !== undefined) {
+        countMap[n.color as FilterType]++;
+      }
+    }
+    return countMap;
+  }, [networks]);
 
-    return (
-      <BlurView intensity={45} tint="dark" style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={{ flex: 1 }}>
-            <View style={styles.titleRow}>
-              <Ionicons name="wifi" size={18} color={signalColor} />
+  const filtered = useMemo(() => {
+    if (activeFilter === "all") return networks;
+    return networks.filter((n) => n.color === activeFilter);
+  }, [networks, activeFilter]);
 
-              <Text style={styles.ssid} numberOfLines={1}>
-                {item.SSID || "Hidden network"}
-              </Text>
+  const renderItem = useCallback(
+    ({ item }: { item: ClassifiedWifiNetwork }) => {
+      const accent = getRiskColor(item.color);
+      const distance = estimateDistance(item.level, item.frequency);
+
+      return (
+        <View style={styles.card}>
+          <View style={[styles.cardAccent, { backgroundColor: accent }]} />
+          <View style={styles.cardBody}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardHeaderLeft}>
+                <Text numberOfLines={1} style={styles.ssid}>
+                  {item.SSID || "Скрытая сеть"}
+                </Text>
+                <Text numberOfLines={1} style={styles.bssid}>
+                  {item.BSSID?.toUpperCase()}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.pill,
+                  {
+                    backgroundColor: `${accent}18`,
+                    borderColor: `${accent}30`,
+                  },
+                ]}
+              >
+                <Text
+                  style={[styles.pillText, { color: accent }]}
+                  numberOfLines={1}
+                >
+                  {item.description}
+                </Text>
+              </View>
             </View>
 
-            <Text style={styles.mac}>MAC: {item.BSSID}</Text>
-          </View>
-
-          <View style={styles.signalBlock}>
-            <Text style={[styles.signal, { color: signalColor }]}>
-              {item.level} dBm
+            <Text numberOfLines={1} style={styles.vendor}>
+              {item.vendor || "Unknown"}
             </Text>
 
-            <Text style={styles.frequency}>{item.frequency} MHz</Text>
+            <View style={styles.metrics}>
+              <View style={styles.metricItem}>
+                <Ionicons name="wifi" size={10} color="#64748B" />
+                <Text style={styles.metricValue}>{item.level} dBm</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricItem}>
+                <Ionicons name="navigate" size={10} color="#64748B" />
+                <Text style={styles.metricValue}>{distance}</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricItem}>
+                <Ionicons name="lock-closed" size={10} color="#64748B" />
+                <Text style={styles.metricValue} numberOfLines={1}>
+                  {item.rsnFlags || "OPEN"}
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
+      );
+    },
+    [],
+  );
 
-        <View style={styles.badges}>
-          <View
-            style={[
-              styles.badge,
-              {
-                backgroundColor: `${statusColor}22`,
-                borderColor: `${statusColor}55`,
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.badgeDot,
-                {
-                  backgroundColor: statusColor,
-                },
-              ]}
-            />
-
-            <Text style={[styles.badgeText, { color: statusColor }]}>
-              {item.description}
-            </Text>
-          </View>
-
-          <View style={styles.badge}>
-            <Ionicons name="shield-checkmark" size={14} color="#60a5fa" />
-
-            <Text style={styles.badgeTextNeutral}>
-              {item.rsnFlags || "Unknown"}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.infoGrid}>
-          <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>Производитель</Text>
-
-            <Text style={styles.infoValue}>{item.vendor || "Неизвестно"}</Text>
-          </View>
-
-          <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>Частота</Text>
-
-            <Text style={styles.infoValue}>{item.frequency} MHz</Text>
-          </View>
-        </View>
-      </BlurView>
-    );
-  };
+  const keyExtractor = useCallback(
+    (item: ClassifiedWifiNetwork, index: number) => `${item.BSSID}-${index}`,
+    [],
+  );
 
   return (
     <LinearGradient
-      colors={["#0b1120", "#111827", "#1e293b"]}
-      style={styles.container}
+      colors={["#0A0F1E", "#111827", "#0F172A"]}
+      style={styles.screen}
     >
       <FlatList
-        data={networks}
-        keyExtractor={(item, index) => item.BSSID + index}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => scanWifi(true)}
-            tintColor="#60a5fa"
-          />
-        }
-        ListHeaderComponent={
-          <>
-            <BlurView intensity={50} tint="dark" style={styles.heroCard}>
-              <View style={styles.heroTop}>
-                <View>
-                  <Text style={styles.heroTitle}>Wi-Fi Scanner</Text>
-
-                  <Text style={styles.heroSubtitle}>
-                    Автообновление каждые 5 секунд
-                  </Text>
-                </View>
-
-                <View style={styles.liveBadge}>
-                  <View style={styles.liveDot} />
-
-                  <Text style={styles.liveText}>LIVE</Text>
-                </View>
-              </View>
-
-              <View style={styles.heroStats}>
-                <View style={styles.statCard}>
-                  <Ionicons name="wifi" size={18} color="#60a5fa" />
-
-                  <Text style={styles.statValue}>{networks.length}</Text>
-
-                  <Text style={styles.statLabel}>сетей</Text>
-                </View>
-
-                <View style={styles.statCard}>
-                  <Ionicons name="shield-checkmark" size={18} color="#4ade80" />
-
-                  <Text style={styles.statValue}>
-                    {networks.filter((n) => n.color === "good-wifi").length}
-                  </Text>
-
-                  <Text style={styles.statLabel}>безопасных</Text>
-                </View>
-
-                <View style={styles.statCard}>
-                  <Ionicons name="warning" size={18} color="#f87171" />
-
-                  <Text style={styles.statValue}>
-                    {networks.filter((n) => n.color === "bad-wifi").length}
-                  </Text>
-
-                  <Text style={styles.statLabel}>опасных</Text>
-                </View>
-              </View>
-            </BlurView>
-
-            <Text style={styles.sectionTitle}>Найденные сети</Text>
-
-            {loading && (
-              <ActivityIndicator
-                size="large"
-                color="#3b82f6"
-                style={{ marginTop: 40 }}
-              />
-            )}
-
-            {!loading && !networks.length && (
-              <Text style={styles.emptyText}>Wi-Fi сети не найдены</Text>
-            )}
-          </>
-        }
+        data={filtered}
+        keyExtractor={keyExtractor}
         renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        removeClippedSubviews
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        initialNumToRender={15}
+        ListHeaderComponent={
+          <View style={styles.header}>
+            {FILTER_CATEGORIES.sort(
+              (a, b) => CATEGORY_PRIORITY[a.key] - CATEGORY_PRIORITY[b.key],
+            ).map((cat) => {
+              const isActive = activeFilter === cat.key;
+              const catColor = getRiskColor(cat.key);
+
+              return (
+                <TouchableOpacity
+                  key={cat.key}
+                  activeOpacity={0.7}
+                  onPress={() => setActiveFilter(cat.key)}
+                  style={[
+                    styles.filterChip,
+                    isActive && {
+                      backgroundColor: `${catColor}14`,
+                      borderColor: `${catColor}40`,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={cat.icon}
+                    size={12}
+                    color={isActive ? catColor : "#64748B"}
+                  />
+                  <Text
+                    style={[
+                      styles.filterLabel,
+                      isActive && { color: catColor },
+                    ]}
+                  >
+                    {cat.label}
+                  </Text>
+                  <View
+                    style={[
+                      styles.filterCount,
+                      isActive && { backgroundColor: `${catColor}20` },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.filterCountText,
+                        isActive && { color: catColor },
+                      ]}
+                    >
+                      {counts[cat.key]}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+            {isScanning && (
+              <View style={styles.scanIndicator}>
+                <View style={styles.scanDot} />
+                <Text style={styles.scanText}>Сканирование...</Text>
+              </View>
+            )}
+          </View>
+        }
       />
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
   },
-
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 70,
+  listContent: {
+    paddingTop: 120,
+    paddingHorizontal: 10,
     paddingBottom: 40,
   },
-
-  heroCard: {
-    overflow: "hidden",
-    borderRadius: 30,
-    padding: 22,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-    marginBottom: 28,
-  },
-
-  heroTop: {
+  header: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 24,
-  },
-
-  heroTitle: {
-    color: "#fff",
-    fontSize: 28,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-
-  heroSubtitle: {
-    color: "#94a3b8",
-    fontSize: 14,
-  },
-
-  liveBadge: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexWrap: "wrap",
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "rgba(74, 222, 128, 0.15)",
-    borderWidth: 1,
-    borderColor: "rgba(74, 222, 128, 0.25)",
-  },
-
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: "#4ade80",
-  },
-
-  liveText: {
-    color: "#4ade80",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
-  heroStats: {
-    flexDirection: "row",
-    gap: 12,
-  },
-
-  statCard: {
-    flex: 1,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderRadius: 18,
-    paddingVertical: 16,
+    marginBottom: 14,
     alignItems: "center",
+  },
+  filterChip: {
+    height: 28,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(255,255,255,0.03)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
   },
-
-  statValue: {
-    color: "#fff",
-    fontSize: 20,
+  filterLabel: {
+    color: "#94A3B8",
+    fontSize: 10,
     fontWeight: "700",
-    marginTop: 8,
+    letterSpacing: 0.2,
   },
-
-  statLabel: {
-    color: "#94a3b8",
-    fontSize: 12,
-    marginTop: 4,
+  filterCount: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 4,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    paddingHorizontal: 4,
   },
-
-  sectionTitle: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 18,
+  filterCountText: {
+    color: "#CBD5E1",
+    fontSize: 9,
+    fontWeight: "800",
   },
-
+  scanIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: "auto",
+    paddingHorizontal: 6,
+  },
+  scanDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#60A5FA",
+  },
+  scanText: {
+    color: "#60A5FA",
+    fontSize: 9,
+    fontWeight: "600",
+  },
   card: {
-    borderRadius: 24,
+    flexDirection: "row",
+    borderRadius: 10,
     overflow: "hidden",
-    padding: 18,
-    marginBottom: 16,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 6,
+    backgroundColor: "rgba(255,255,255,0.025)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,255,255,0.04)",
   },
-
+  cardAccent: {
+    width: 1,
+  },
+  cardBody: {
+    flex: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 16,
+    alignItems: "flex-start",
+    marginBottom: 4,
   },
-
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6,
-  },
-
-  ssid: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "700",
-    maxWidth: "90%",
-  },
-
-  mac: {
-    color: "#64748b",
-    fontSize: 12,
-  },
-
-  signalBlock: {
-    alignItems: "flex-end",
-  },
-
-  signal: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-
-  frequency: {
-    color: "#94a3b8",
-    fontSize: 12,
-    marginTop: 4,
-  },
-
-  badges: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 16,
-  },
-
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-  },
-
-  badgeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-  },
-
-  badgeText: {
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
-  badgeTextNeutral: {
-    color: "#cbd5e1",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  infoGrid: {
-    flexDirection: "row",
-    gap: 12,
-  },
-
-  infoItem: {
+  cardHeaderLeft: {
     flex: 1,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderRadius: 16,
-    padding: 14,
+    marginRight: 8,
   },
-
-  infoLabel: {
-    color: "#64748b",
-    fontSize: 11,
-    textTransform: "uppercase",
+  ssid: {
+    color: "#F8FAFC",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.1,
+  },
+  bssid: {
+    color: "#94A3B8",
+    fontSize: 10,
+    fontWeight: "800",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+  pill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+    maxWidth: 100,
+  },
+  pillText: {
+    fontSize: 8,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  vendor: {
+    color: "#64748B",
+    fontSize: 9,
+    fontWeight: "600",
     marginBottom: 6,
   },
-
-  infoValue: {
-    color: "#e2e8f0",
-    fontSize: 14,
-    fontWeight: "600",
+  metrics: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.015)",
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 6,
   },
-
-  emptyText: {
-    color: "#94a3b8",
-    textAlign: "center",
-    marginTop: 40,
-    fontSize: 15,
+  metricItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    flex: 1,
+  },
+  metricDivider: {
+    width: 1,
+    height: 12,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  metricValue: {
+    color: "#CBD5E1",
+    fontSize: 9,
+    fontWeight: "600",
   },
 });
