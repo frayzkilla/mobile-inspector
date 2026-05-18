@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -10,8 +10,15 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
+import * as Speech from "expo-speech";
+// import {
+//   ExpoSpeechRecognitionModule,
+//   useSpeechRecognitionEvent,
+// } from "expo-speech-recognition";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
@@ -26,6 +33,8 @@ interface Violation {
   comment: string;
   photos: string[];
   createdAt: string;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export default function ChecklistScreen({ route, navigation }: Props) {
@@ -62,12 +71,91 @@ export default function ChecklistScreen({ route, navigation }: Props) {
 
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
+  const [currentCoords, setCurrentCoords] = useState<{
+    latitude: number | null;
+    longitude: number | null;
+  }>({
+    latitude: null,
+    longitude: null,
+  });
+
+  const [isRecording, setIsRecording] = useState(false);
+
+  const locationSubscription = useRef<Location.LocationSubscription | null>(
+    null,
+  );
+
   useEffect(() => {
     (async () => {
       await ImagePicker.requestCameraPermissionsAsync();
       await ImagePicker.requestMediaLibraryPermissionsAsync();
+      await Location.requestForegroundPermissionsAsync();
+
+      // const permissions =
+      //   await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+
+      // if (!permissions.granted) {
+      //   Alert.alert(
+      //     "Ошибка",
+      //     "Необходимо разрешение на использование микрофона",
+      //   );
+      // }
     })();
+
+    startLocationTracking();
+
+    return () => {
+      stopLocationTracking();
+    };
   }, []);
+
+  // useSpeechRecognitionEvent("result", (event) => {
+  //   const transcript = event.results
+  //     ?.map((r: any) => r.transcript)
+  //     .join(" ");
+
+  //   if (transcript) {
+  //     setComment((prev) =>
+  //       prev.trim().length > 0
+  //         ? `${prev.trim()} ${transcript}`
+  //         : transcript,
+  //     );
+  //   }
+  // });
+
+  // useSpeechRecognitionEvent("end", () => {
+  //   setIsRecording(false);
+  // });
+
+  // useSpeechRecognitionEvent("error", () => {
+  //   setIsRecording(false);
+  //   Alert.alert("Ошибка", "Не удалось распознать голос");
+  // });
+
+  const startLocationTracking = async () => {
+    try {
+      locationSubscription.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 5000,
+          distanceInterval: 5,
+        },
+        (location) => {
+          setCurrentCoords({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
+        },
+      );
+    } catch {}
+  };
+
+  const stopLocationTracking = () => {
+    if (locationSubscription.current) {
+      locationSubscription.current.remove();
+      locationSubscription.current = null;
+    }
+  };
 
   const filteredCategories = useMemo(() => {
     return process.categories
@@ -85,11 +173,13 @@ export default function ChecklistScreen({ route, navigation }: Props) {
   const toggleCategory = (id: string) => {
     setExpandedCategories((prev) => {
       const next = new Set(prev);
+
       if (next.has(id)) {
         next.delete(id);
       } else {
         next.add(id);
       }
+
       return next;
     });
   };
@@ -97,11 +187,13 @@ export default function ChecklistScreen({ route, navigation }: Props) {
   const toggleDoc = (id: string) => {
     setExpandedDocs((prev) => {
       const next = new Set(prev);
+
       if (next.has(id)) {
         next.delete(id);
       } else {
         next.add(id);
       }
+
       return next;
     });
   };
@@ -112,10 +204,18 @@ export default function ChecklistScreen({ route, navigation }: Props) {
     categoryName: string,
   ) => {
     setSelectedItemId(checkItemId);
-    setSelectedItemInfo({ name: itemName, category: categoryName });
+
+    setSelectedItemInfo({
+      name: itemName,
+      category: categoryName,
+    });
+
     setEditingViolationId(null);
+
     setComment("");
+
     setPhotos([]);
+
     setModalVisible(true);
   };
 
@@ -131,12 +231,46 @@ export default function ChecklistScreen({ route, navigation }: Props) {
     categoryName: string,
   ) => {
     setSelectedItemId(checkItemId);
-    setSelectedItemInfo({ name: itemName, category: categoryName });
+
+    setSelectedItemInfo({
+      name: itemName,
+      category: categoryName,
+    });
+
     setEditingViolationId(violation.id);
+
     setComment(violation.comment);
+
     setPhotos(violation.photos);
+
     setViolationsModalVisible(false);
+
     setModalVisible(true);
+  };
+
+  const startVoiceInput = async () => {
+    // try {
+    //   setIsRecording(true);
+    //   await ExpoSpeechRecognitionModule.start({
+    //     lang: "ru-RU",
+    //     interimResults: true,
+    //     continuous: false,
+    //     maxAlternatives: 1,
+    //     requiresOnDeviceRecognition: false,
+    //   });
+    // } catch {
+    //   setIsRecording(false);
+    //   Alert.alert("Ошибка", "Не удалось начать запись");
+    // }
+  };
+
+  const stopVoiceInput = async () => {
+    // try {
+    //   await ExpoSpeechRecognitionModule.stop();
+    //   setIsRecording(false);
+    // } catch {
+    //   setIsRecording(false);
+    // }
   };
 
   const takePhoto = async () => {
@@ -144,6 +278,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
       const result = await ImagePicker.launchCameraAsync({
         quality: 0.7,
       });
+
       if (!result.canceled && result.assets?.length > 0) {
         setPhotos((prev) => [...prev, result.assets[0].uri]);
       }
@@ -158,8 +293,10 @@ export default function ChecklistScreen({ route, navigation }: Props) {
         allowsMultipleSelection: true,
         quality: 0.7,
       });
+
       if (!result.canceled && result.assets?.length > 0) {
         const uris = result.assets.map((a) => a.uri);
+
         setPhotos((prev) => [...prev, ...uris]);
       }
     } catch {
@@ -174,6 +311,13 @@ export default function ChecklistScreen({ route, navigation }: Props) {
   const saveViolation = () => {
     if (!selectedItemId) return;
 
+    const payload = {
+      comment,
+      photos,
+      latitude: currentCoords.latitude,
+      longitude: currentCoords.longitude,
+    };
+
     if (editingViolationId) {
       setViolations((prev) => ({
         ...prev,
@@ -181,8 +325,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
           v.id === editingViolationId
             ? {
                 ...v,
-                comment,
-                photos,
+                ...payload,
               }
             : v,
         ),
@@ -190,15 +333,16 @@ export default function ChecklistScreen({ route, navigation }: Props) {
     } else {
       const newViolation: Violation = {
         id: Date.now().toString(),
-        comment,
-        photos,
         createdAt: new Date().toISOString(),
+        ...payload,
       };
+
       setViolations((prev) => ({
         ...prev,
         [selectedItemId]: [...(prev[selectedItemId] || []), newViolation],
       }));
     }
+
     setModalVisible(false);
   };
 
@@ -214,14 +358,18 @@ export default function ChecklistScreen({ route, navigation }: Props) {
   const submitCheck = async () => {
     try {
       const formData = new FormData();
+
       const answers: any[] = [];
 
       Object.entries(violations).forEach(([checkItemId, items]) => {
         items.forEach((violation, index) => {
           const photoNames: string[] = [];
+
           violation.photos.forEach((uri, photoIndex) => {
             const filename = `${checkItemId}_${index}_${photoIndex}.jpg`;
+
             photoNames.push(filename);
+
             formData.append("files", {
               uri,
               name: filename,
@@ -234,12 +382,21 @@ export default function ChecklistScreen({ route, navigation }: Props) {
             result: false,
             comment: violation.comment,
             photos: photoNames,
+            location: {
+              latitude: violation.latitude,
+              longitude: violation.longitude,
+            },
+            created_at: violation.createdAt,
           });
         });
       });
 
+      console.log("Submitting check with answers:", answers);
+
       formData.append("vspId", String(vsp.vsp_id));
+
       formData.append("processId", process.process_id);
+
       formData.append("answers", JSON.stringify(answers));
 
       const response = await fetch("http://158.160.228.123:8777/checks", {
@@ -252,6 +409,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
       }
 
       Alert.alert("Успех", "Проверка завершена");
+
       navigation.goBack();
     } catch {
       Alert.alert("Ошибка", "Не удалось отправить проверку");
@@ -265,6 +423,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
     >
       <View style={styles.headerContainer}>
         <Text style={styles.vspName}>{vsp.vsp_name}</Text>
+
         <Text style={styles.processName}>{process.process_name}</Text>
       </View>
 
@@ -275,6 +434,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
           color="#94a3b8"
           style={{ marginRight: 10 }}
         />
+
         <TextInput
           style={styles.search}
           placeholder="Поиск..."
@@ -296,6 +456,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
               onPress={() => toggleCategory(item.category_id)}
             >
               <Text style={styles.categoryName}>{item.category_name}</Text>
+
               <Ionicons
                 name={
                   expandedCategories.has(item.category_id)
@@ -310,7 +471,9 @@ export default function ChecklistScreen({ route, navigation }: Props) {
             {expandedCategories.has(item.category_id) &&
               item.checkitems.map((checkItem) => {
                 const count = violations[checkItem.check_item_id]?.length || 0;
+
                 const isDocExpanded = expandedDocs.has(checkItem.check_item_id);
+
                 const isHighRisk = checkItem.level_value >= 3;
 
                 return (
@@ -341,6 +504,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                                 },
                               ]}
                             />
+
                             <Text style={styles.description}>
                               {checkItem.check_item_description}
                             </Text>
@@ -351,6 +515,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                               style={styles.docToggle}
                               onPress={(e) => {
                                 e.stopPropagation();
+
                                 toggleDoc(checkItem.check_item_id);
                               }}
                             >
@@ -375,6 +540,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                           ]}
                           onPress={(e) => {
                             e.stopPropagation();
+
                             openViolationList(checkItem.check_item_id);
                           }}
                         >
@@ -422,6 +588,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Нарушение</Text>
+
               <TouchableOpacity onPress={() => setModalVisible(false)}>
                 <Ionicons name="close" size={28} color="#94a3b8" />
               </TouchableOpacity>
@@ -430,6 +597,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
             {selectedItemInfo && (
               <View style={styles.infoBlock}>
                 <Text style={styles.infoLabel}>Категория</Text>
+
                 <Text style={styles.infoValue}>
                   {selectedItemInfo.category}
                 </Text>
@@ -437,6 +605,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                 <Text style={[styles.infoLabel, { marginTop: 12 }]}>
                   Пункт проверки
                 </Text>
+
                 <Text style={styles.infoValueText}>
                   {selectedItemInfo.name}
                 </Text>
@@ -445,16 +614,38 @@ export default function ChecklistScreen({ route, navigation }: Props) {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.inputLabel}>Комментарий</Text>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Опишите нарушение..."
-                placeholderTextColor="#64748b"
-                multiline
-                value={comment}
-                onChangeText={setComment}
-              />
+
+              <View style={styles.commentWrapper}>
+                <TextInput
+                  style={styles.commentInput}
+                  placeholder="Опишите нарушение..."
+                  placeholderTextColor="#64748b"
+                  multiline
+                  value={comment}
+                  onChangeText={setComment}
+                />
+
+                <TouchableOpacity
+                  style={[
+                    styles.voiceButton,
+                    {
+                      backgroundColor: isRecording
+                        ? "rgba(239,68,68,0.2)"
+                        : "rgba(59,130,246,0.15)",
+                    },
+                  ]}
+                  onPress={isRecording ? stopVoiceInput : startVoiceInput}
+                >
+                  <Ionicons
+                    name={isRecording ? "stop" : "mic"}
+                    size={20}
+                    color="#fff"
+                  />
+                </TouchableOpacity>
+              </View>
 
               <Text style={styles.inputLabel}>Фото</Text>
+
               <View style={styles.photoActions}>
                 <TouchableOpacity
                   style={styles.photoActionButton}
@@ -462,6 +653,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                 >
                   <Ionicons name="camera-outline" size={20} color="#fff" />
                 </TouchableOpacity>
+
                 <TouchableOpacity
                   style={styles.photoActionButton}
                   onPress={pickFromGallery}
@@ -480,6 +672,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                   <TouchableOpacity onPress={() => setPreviewPhoto(item)}>
                     <View style={styles.imageWrapper}>
                       <Image source={{ uri: item }} style={styles.image} />
+
                       <TouchableOpacity
                         style={styles.removePhoto}
                         onPress={() => removePhoto(item)}
@@ -511,6 +704,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Найдено</Text>
+
               <TouchableOpacity
                 onPress={() => setViolationsModalVisible(false)}
               >
@@ -527,6 +721,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                   <Text style={styles.violationText}>
                     {item.comment || "Без комментария"}
                   </Text>
+
                   <FlatList
                     horizontal
                     data={item.photos}
@@ -542,6 +737,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                       </TouchableOpacity>
                     )}
                   />
+
                   <View style={styles.violationButtons}>
                     <TouchableOpacity
                       style={styles.editButton}
@@ -556,6 +752,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                               c.category_id ===
                               (currentItem as any).category_id,
                           );
+
                           editViolation(
                             selectedItemId!,
                             item,
@@ -567,6 +764,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
                     >
                       <Text style={styles.editButtonText}>Изменить</Text>
                     </TouchableOpacity>
+
                     <TouchableOpacity
                       style={styles.deleteButton}
                       onPress={() => deleteViolation(selectedItemId!, item.id)}
@@ -593,6 +791,7 @@ export default function ChecklistScreen({ route, navigation }: Props) {
           >
             <Ionicons name="close" size={32} color="#fff" />
           </TouchableOpacity>
+
           {previewPhoto && (
             <Image
               source={{ uri: previewPhoto }}
@@ -752,11 +951,6 @@ const styles = StyleSheet.create({
     right: 20,
     borderRadius: 20,
     overflow: "hidden",
-    shadowColor: "#3b82f6",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
   },
   finishButtonGradient: {
     padding: 16,
@@ -826,16 +1020,30 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: 8,
   },
+  commentWrapper: {
+    position: "relative",
+  },
   commentInput: {
     backgroundColor: "rgba(255,255,255,0.03)",
     color: "#fff",
-    minHeight: 100,
+    minHeight: 120,
     borderRadius: 16,
     padding: 16,
+    paddingRight: 70,
     textAlignVertical: "top",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
     fontSize: 15,
+  },
+  voiceButton: {
+    position: "absolute",
+    right: 14,
+    bottom: 14,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
   },
   photoActions: {
     flexDirection: "row",
@@ -874,9 +1082,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#ef4444",
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#1e293b",
-    zIndex: 10,
   },
   saveButton: {
     backgroundColor: "#3b82f6",
@@ -925,8 +1130,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(59, 130, 246, 0.2)",
   },
   editButtonText: {
     color: "#60a5fa",
@@ -939,8 +1142,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(239, 68, 68, 0.2)",
   },
   deleteButtonText: {
     color: "#f87171",

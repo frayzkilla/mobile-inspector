@@ -39,12 +39,19 @@ type CheckItemInfo = {
   name: string;
 };
 
+type LocationInfo = {
+  latitude: number | null;
+  longitude: number | null;
+};
+
 type Answer = {
   category: string;
   check_item: CheckItemInfo;
   result: boolean;
   comment: string;
   photos: string[];
+  location?: LocationInfo;
+  createdAt?: string;
 };
 
 type CheckResult = {
@@ -63,23 +70,36 @@ export default function HomeScreen({ navigation }: Props) {
   const [results, setResults] = useState<CheckResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCheck, setSelectedCheck] = useState<CheckResult | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadResults();
   }, []);
 
-  const loadResults = async () => {
+  const loadResults = async (silent = false) => {
     try {
-      setLoading(true);
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
       const response = await fetch(`${API_URL}/results`);
       const data = await response.json();
+
       setResults(data || []);
     } catch (e) {
       console.log("Ошибка загрузки проверок", e);
+
       Alert.alert("Ошибка", "Не удалось загрузить список проверок");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const onRefresh = async () => {
+    await loadResults(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -125,7 +145,7 @@ export default function HomeScreen({ navigation }: Props) {
         }
         break;
       case "tickets":
-        Alert.alert("Тикеты", "Данный функционал находится в разработке 🚧");
+        Alert.alert("Тикеты", "Данный функционал находится в разработке");
         break;
       case "help":
         Alert.alert("Справка", "Мотошкин Артем :)");
@@ -232,6 +252,8 @@ export default function HomeScreen({ navigation }: Props) {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
         ListHeaderComponent={
           <>
             <BlurView intensity={50} tint="dark" style={styles.heroCard}>
@@ -307,7 +329,11 @@ export default function HomeScreen({ navigation }: Props) {
                   .map((answer, idx) => (
                     <View key={idx} style={styles.violationItem}>
                       <View style={styles.violationHeader}>
-                        <Ionicons name="checkmark-circle" size={18} color="#60a5fa" />
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={18}
+                          color="#60a5fa"
+                        />
                         <Text style={styles.violationCategory}>
                           {answer.category}
                         </Text>
@@ -320,6 +346,51 @@ export default function HomeScreen({ navigation }: Props) {
                           {answer.comment}
                         </Text>
                       ) : null}
+
+                      {answer.location?.latitude &&
+                        answer.location?.longitude && (
+                          <View style={styles.locationBlock}>
+                            <View style={styles.locationHeader}>
+                              <Ionicons
+                                name="location"
+                                size={16}
+                                color="#60a5fa"
+                              />
+                              <Text style={styles.locationTitle}>
+                                Координаты
+                              </Text>
+                            </View>
+
+                            <Text style={styles.locationText}>
+                              Широта: {answer.location.latitude}
+                            </Text>
+
+                            <Text style={styles.locationText}>
+                              Долгота: {answer.location.longitude}
+                            </Text>
+
+                            {/* <TouchableOpacity
+                              style={styles.mapButton}
+                              onPress={() => {
+                                const url = `https://maps.google.com/?q=${answer.location?.latitude},${answer.location?.longitude}`;
+
+                                Alert.alert(
+                                  "Координаты",
+                                  `${answer.location?.latitude}, ${answer.location?.longitude}`,
+                                );
+                              }}
+                            >
+                              <Ionicons
+                                name="map-outline"
+                                size={16}
+                                color="#fff"
+                              />
+                              <Text style={styles.mapButtonText}>
+                                Показать координаты
+                              </Text>
+                            </TouchableOpacity> */}
+                          </View>
+                        )}
 
                       {answer.photos.length > 0 && (
                         <FlatList
@@ -654,5 +725,49 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginRight: 12,
     backgroundColor: "#1e293b",
+  },
+  locationBlock: {
+    marginBottom: 14,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "rgba(59,130,246,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.15)",
+  },
+
+  locationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+
+  locationTitle: {
+    color: "#60a5fa",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  locationText: {
+    color: "#cbd5e1",
+    fontSize: 13,
+    marginBottom: 4,
+  },
+
+  mapButton: {
+    marginTop: 12,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: "rgba(59,130,246,0.25)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+
+  mapButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 13,
   },
 });
