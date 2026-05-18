@@ -50,11 +50,10 @@ export default function VspSelectScreen({ navigation }: Props) {
         colors={["#0b1120", "#111827", "#1e293b"]}
         style={[styles.container, styles.center]}
       >
-        <BlurView intensity={50} tint="dark" style={styles.loaderCard}>
+        <View style={styles.loaderContainer}>
           <ActivityIndicator size="large" color="#3b82f6" />
-
           <Text style={styles.loadingText}>Загрузка ВСП...</Text>
-        </BlurView>
+        </View>
       </LinearGradient>
     );
   }
@@ -119,8 +118,6 @@ export default function VspSelectScreen({ navigation }: Props) {
             }
           >
             <BlurView intensity={45} tint="dark" style={styles.card}>
-              {/* <View style={styles.cardGlow} /> */}
-
               <View style={styles.cardTop}>
                 <View style={styles.iconBox}>
                   <Ionicons name="business-outline" size={22} color="#60a5fa" />
@@ -277,21 +274,17 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
 
-  loaderCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderRadius: 26,
+  loaderContainer: {
     alignItems: "center",
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    backgroundColor: "rgba(255,255,255,0.06)",
+    justifyContent: "center",
+    gap: 12,
   },
 
   loadingText: {
-    color: "#cbd5e1",
-    marginTop: 16,
-    fontSize: 15,
+    color: "#94a3b8",
+    fontSize: 14,
+    fontWeight: "500",
+    letterSpacing: 0.5,
   },
 
   emptyCard: {

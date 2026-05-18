@@ -51,6 +51,7 @@ export default function AppNavigator() {
             intensity={55}
             tint="dark"
             style={StyleSheet.absoluteFill}
+            
           />
         ),
 
@@ -64,8 +65,9 @@ export default function AppNavigator() {
           fontSize: 18,
         },
 
-        headerStyle: {
+        headerStyle: { 
           backgroundColor: "transparent",
+          
         },
       }}
     >
