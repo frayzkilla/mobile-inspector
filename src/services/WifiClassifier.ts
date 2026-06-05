@@ -101,7 +101,7 @@ const getNetworkTrust = (
 
   let isTrusted = false;
   let result = {
-    description: "ВНИМАНИЕ! Подозрительная сеть",
+    description: "Подозрительная сеть",
     color: "bad-wifi",
     order: 10,
   };
