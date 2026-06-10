@@ -10,3 +10,4 @@ export interface WifiProfile {
   color: string;
   config: WifiProfileConfig[];
 }
+ 
