@@ -45,7 +45,9 @@ export interface Process {
 export const api = {
   async getVsps(): Promise<Vsp[]> {
     const response = await fetch(`${BASE_URL}/objects/objects`);
+    console.log("url = ", `${BASE_URL}/objects/objects`);
     const data = await response.json();
+    console.log(data);
     return data.data;
   },
 
