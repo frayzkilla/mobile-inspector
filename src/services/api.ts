@@ -1,4 +1,5 @@
-const BASE_URL = "http://158.160.228.123:8777";
+// const BASE_URL = "http://158.160.228.123:8777";
+const BASE_URL = "https://tvldw-nscan0004.delta.sbrf.ru/mobile-backend/api/v1";
 
 export interface Vsp {
   vsp_id: string;
@@ -43,13 +44,13 @@ export interface Process {
 
 export const api = {
   async getVsps(): Promise<Vsp[]> {
-    const response = await fetch(`${BASE_URL}/vsps`);
+    const response = await fetch(`${BASE_URL}/objects/objects`);
     const data = await response.json();
     return data.data;
   },
 
   async getChecklists(): Promise<Process[]> {
-    const response = await fetch(`${BASE_URL}/checklists`);
+    const response = await fetch(`${BASE_URL}/checklists/checklists`);
     const data = await response.json();
     return data.processes;
   },

@@ -63,7 +63,8 @@ type CheckResult = {
   updatedAt: string | null;
 };
 
-const API_URL = "http://158.160.228.123:8777";
+const DEV_API_URL = "http://158.160.228.123:8777";
+const API_URL = "https://tvldw-nscan0004.delta.sbrf.ru/mobile-backend/api/v1/"
 
 export default function HomeScreen({ navigation }: Props) {
   const [activeTab, setActiveTab] = useState<TabType>(null);
@@ -84,7 +85,7 @@ export default function HomeScreen({ navigation }: Props) {
         setLoading(true);
       }
 
-      const response = await fetch(`${API_URL}/results`);
+      const response = await fetch(`${API_URL}/checks/results`);
       const data = await response.json();
 
       setResults(data || []);

@@ -399,10 +399,13 @@ export default function ChecklistScreen({ route, navigation }: Props) {
 
       formData.append("answers", JSON.stringify(answers));
 
-      const response = await fetch("http://158.160.228.123:8777/checks", {
-        method: "POST",
-        body: formData,
-      });
+      const response = await fetch(
+        "https://tvldw-nscan0004.delta.sbrf.ru/mobile-backend/api/v1/objects/checks/",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
 
       if (!response.ok) {
         throw new Error();
